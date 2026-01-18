@@ -136,11 +136,14 @@ export interface ApprovalRuleLevel {
 }
 
 export interface ApprovalRule {
+  id?: string
   ruleName: string
   priority: number
   active: boolean
   criteria: ApprovalRuleCriteria[]
   levels: ApprovalRuleLevel[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface PricingRuleDimensions {
@@ -171,6 +174,9 @@ export interface PricingRule {
   dimensions: PricingRuleDimensions
   rates: PricingRuleRates
   fees: PricingRuleFees
+  effectiveFrom?: string | null
+  effectiveTo?: string | null
+  notes?: string | null
 }
 
 export interface SystemPermission {
