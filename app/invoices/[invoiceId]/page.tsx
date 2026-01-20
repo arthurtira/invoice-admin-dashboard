@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { getApiErrorMessage } from "@/app/api/client"
 import { useToast } from "@/hooks/use-toast"
 import { tasksApi } from "@/app/api/tasks"
+import { useAuthContext } from "@/app/context/auth-context"
 
 export default function InvoiceDetailPage() {
   const params = useParams()
@@ -27,6 +28,7 @@ export default function InvoiceDetailPage() {
   const [actionReason, setActionReason] = useState("")
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { user } = useAuthContext()
   const searchParams = useSearchParams()
   const taskIdParam = searchParams.get("taskId")
 
@@ -158,6 +160,31 @@ export default function InvoiceDetailPage() {
     return approvalTasks.find((task) => task.taskId === taskIdParam) ?? null
   }, [approvalTasks, taskIdParam])
 
+  const currentUserId = user?.sub ?? null
+  const normalizedUserRoles = useMemo(() => {
+    return new Set((user?.roles ?? []).map((role) => role.toLowerCase().trim()).filter(Boolean))
+  }, [user])
+
+  const isActionBlocked = useMemo(() => {
+    if (!actionableTask) return false
+    if (!currentUserId || normalizedUserRoles.size === 0) return false
+    const taskRoles = actionableTask.candidateRoles
+      .map((role) => role.toLowerCase().trim())
+      .filter((role) => normalizedUserRoles.has(role))
+    if (!taskRoles.length) return false
+    return approvalTasks.some((other) => {
+      if (other.taskId === actionableTask.taskId) return false
+      if (other.dealId !== actionableTask.dealId) return false
+      if (other.actionedBy !== currentUserId) return false
+      const otherRoles = other.candidateRoles
+        .map((role) => role.toLowerCase().trim())
+        .filter((role) => normalizedUserRoles.has(role))
+      if (!otherRoles.length) return false
+      const otherRoleSet = new Set(otherRoles)
+      return taskRoles.some((role) => otherRoleSet.has(role))
+    })
+  }, [actionableTask, approvalTasks, currentUserId, normalizedUserRoles])
+
   const timelineItems = useMemo(() => {
     if (!invoiceEvents.length) {
       return []
@@ -258,14 +285,6 @@ export default function InvoiceDetailPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Currency</p>
                       <p className="text-sm">{invoice.currency}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Seller Ref</p>
-                      <p className="text-sm">{invoice.sellerRef}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Debtor Ref</p>
-                      <p className="text-sm">{invoice.debtorRef}</p>
                     </div>
                   </div>
 
@@ -444,6 +463,11 @@ export default function InvoiceDetailPage() {
                       </div>
                       <StatusBadge status={actionableTask.status} />
                     </div>
+                    {isActionBlocked && (
+                      <p className="mt-3 text-xs text-amber-700">
+                        You have already actioned another approval for this deal and role.
+                      </p>
+                    )}
                     <div className="mt-4 space-y-2">
                       <Label htmlFor="approval-reason">Comment</Label>
                       <Textarea
@@ -451,6 +475,7 @@ export default function InvoiceDetailPage() {
                         placeholder="Add a comment for this action..."
                         value={actionReason}
                         onChange={(e) => setActionReason(e.target.value)}
+                        disabled={isActionBlocked}
                       />
                     </div>
                     <div className="mt-4 flex gap-2">
@@ -463,7 +488,7 @@ export default function InvoiceDetailPage() {
                             reason: actionReason,
                           })
                         }
-                        disabled={taskActionMutation.isPending}
+                        disabled={taskActionMutation.isPending || isActionBlocked}
                       >
                         {taskActionMutation.isPending ? "Processing..." : "Approve"}
                       </Button>
@@ -476,7 +501,7 @@ export default function InvoiceDetailPage() {
                             reason: actionReason,
                           })
                         }
-                        disabled={taskActionMutation.isPending}
+                        disabled={taskActionMutation.isPending || isActionBlocked}
                       >
                         {taskActionMutation.isPending ? "Processing..." : "Reject"}
                       </Button>

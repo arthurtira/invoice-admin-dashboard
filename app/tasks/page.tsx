@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
 import { AuthLayout } from "@/components/layout/auth-layout"
@@ -24,6 +24,7 @@ import { getApiErrorMessage } from "@/app/api/client"
 import { truncateId, formatDate } from "@/lib/format"
 import { useToast } from "@/hooks/use-toast"
 import type { ApprovalTask } from "@/app/types"
+import { useAuthContext } from "@/app/context/auth-context"
 
 export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<string>("PENDING_ACTIONABLE")
@@ -37,10 +38,17 @@ export default function TasksPage() {
 
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { user } = useAuthContext()
 
   const { data, isLoading } = useQuery({
     queryKey: ["tasks", statusFilter],
     queryFn: () => tasksApi.getAll(statusFilter === "ALL" ? undefined : statusFilter),
+  })
+
+  const { data: allTasks } = useQuery({
+    queryKey: ["tasks", "all"],
+    queryFn: () => tasksApi.getAll(),
+    enabled: statusFilter !== "ALL",
   })
 
   const actionMutation = useMutation({
@@ -71,6 +79,35 @@ export default function TasksPage() {
         reason,
       })
     }
+  }
+
+  const currentUserId = user?.sub ?? null
+  const normalizedUserRoles = useMemo(() => {
+    return new Set((user?.roles ?? []).map((role) => role.toLowerCase().trim()).filter(Boolean))
+  }, [user])
+
+  const roleOverlap = (rolesA: string[], rolesB: string[]) => {
+    if (!rolesA.length || !rolesB.length) return false
+    const setB = new Set(rolesB)
+    return rolesA.some((role) => setB.has(role))
+  }
+
+  const userRelevantRoles = (task: ApprovalTask) =>
+    task.candidateRoles.map((role) => role.toLowerCase().trim()).filter((role) => normalizedUserRoles.has(role))
+
+  const tasksForRestriction = statusFilter === "ALL" ? data ?? [] : allTasks ?? []
+
+  const hasUserActionedDealRole = (task: ApprovalTask) => {
+    if (!currentUserId || normalizedUserRoles.size === 0) return false
+    const taskRoles = userRelevantRoles(task)
+    if (!taskRoles.length) return false
+    return tasksForRestriction.some((other) => {
+      if (other.taskId === task.taskId) return false
+      if (other.dealId !== task.dealId) return false
+      if (other.actionedBy !== currentUserId) return false
+      const otherRoles = userRelevantRoles(other)
+      return roleOverlap(taskRoles, otherRoles)
+    })
   }
 
   const columns = [
@@ -106,10 +143,22 @@ export default function TasksPage() {
         <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
           {task.status === "PENDING_ACTIONABLE" && (
             <>
-              <Button variant="outline" size="sm" onClick={() => handleAction(task, "APPROVE")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction(task, "APPROVE")}
+                disabled={hasUserActionedDealRole(task)}
+                title={hasUserActionedDealRole(task) ? "You already actioned an approval for this deal and role." : ""}
+              >
                 Approve
               </Button>
-              <Button variant="outline" size="sm" onClick={() => handleAction(task, "REJECT")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction(task, "REJECT")}
+                disabled={hasUserActionedDealRole(task)}
+                title={hasUserActionedDealRole(task) ? "You already actioned an approval for this deal and role." : ""}
+              >
                 Reject
               </Button>
             </>
